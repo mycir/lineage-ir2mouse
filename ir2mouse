@@ -1,0 +1,158 @@
+#!/bin/sh
+
+# ir2mouse - Converts IR remote button presses to mouse movements or swipes
+
+# For example, on a Rpi/PINN/Lineage setup used as a media centre
+
+# As of Magisk 25.2, install ir2mouse and ir2mouse.conf
+# as a boot script/config to /system/adb/post-fs-data.d
+# (Remember to set root X permissions after copying)
+
+# Usage:
+
+# Compass buttons move mouse or swipe, OK to click.
+# User assigned 'IR_MODE' button toggles mouse/swipe
+# 1-9 and 0 buttons change pointer movement/swipe factor       
+
+# Event types
+EV_SYN=0
+EV_KEY=1
+EV_REL=2
+EV_MSC=4
+# Relative axes
+REL_X=0
+REL_Y=1
+# Synchronization events
+SYN_REPORT=0
+# Misc events
+MSC_SCAN=0004
+# Buttons
+BTN_MOUSE=272
+# Codes
+CLICK_CODE=589825
+# Directions
+UP=0
+DOWN=1
+LEFT=2
+RIGHT=3
+# Modes
+MODE_POINTER=0
+MODE_SWIPE=1
+px=4
+px_factor=5
+swipe_factor=24
+ignore_next=0
+last_button=0
+mode=0
+
+source "${0%/*}/ir2mouse.conf"
+
+mouse_move () {
+  sendevent "/dev/input/event$MOUSE" $EV_REL "$1" $(($2*px_factor))
+  sendevent "/dev/input/event$MOUSE" $EV_SYN $SYN_REPORT 0
+}
+
+mouse_click () {
+  sendevent "/dev/input/event$MOUSE" $EV_MSC $MSC_SCAN $CLICK_CODE
+  sendevent "/dev/input/event$MOUSE" $EV_KEY $BTN_MOUSE $DOWN
+  sendevent "/dev/input/event$MOUSE" $EV_SYN $SYN_REPORT 0
+  sendevent "/dev/input/event$MOUSE" $EV_MSC $MSC_SCAN $CLICK_CODE
+  sendevent "/dev/input/event$MOUSE" $EV_KEY $BTN_MOUSE $UP
+  sendevent "/dev/input/event$MOUSE" $EV_SYN $SYN_REPORT 0
+}
+
+swipe () {
+  if [ "$1" -eq "$UP" ] || [ "$1" -eq "$DOWN" ]; then
+    offset=$((SCREEN_HEIGHT*8/swipe_factor))
+    centre=$((SCREEN_WIDTH/2))
+  else
+    offset=$((SCREEN_WIDTH*8/swipe_factor))
+    centre=$((SCREEN_HEIGHT/2))
+  fi
+  case "$1" in
+    "$UP" ) input swipe $centre $((SCREEN_HEIGHT-offset)) $centre $offset;;
+    "$DOWN" ) input swipe $centre $offset $centre $((SCREEN_HEIGHT-offset));;
+    "$LEFT" ) input swipe $((SCREEN_WIDTH-offset)) $centre $offset $centre;;
+    "$RIGHT" ) input swipe $offset $centre $((SCREEN_WIDTH-offset)) $centre;;
+  esac
+}
+
+toggle_mode () {
+  if [ "$mode" -eq "$MODE_POINTER" ] ; then
+    mode=$MODE_SWIPE
+  else
+    mode=$MODE_POINTER
+  fi
+}
+
+getevent -q -d "/dev/input/event$IR_REMOTE" | \
+    while IFS=" " read -r event code value; do
+  if [ "$code" -eq "$MSC_SCAN" ] ; then
+    if [ "$value" != "$last_button" ] ; then
+      ignore_next=0
+      last_button=$value
+    fi
+    if [ "$ignore_next" -eq 0 ] ; then
+      if [ "$value" = "$IR_UP" ] ; then
+        if [ "$mode" -eq "$MODE_POINTER" ] ; then
+          mouse_move $REL_Y -$px
+        else
+          swipe $DOWN
+        fi
+      elif [ "$value" = "$IR_DOWN" ] ; then
+        if [ "$mode" -eq "$MODE_POINTER" ] ; then
+          mouse_move $REL_Y $px
+        else
+          swipe $UP
+        fi
+      elif [ "$value" = "$IR_LEFT" ] ; then
+        if [ "$mode" -eq "$MODE_POINTER" ] ; then
+          mouse_move $REL_X -$px
+        else
+          swipe $RIGHT
+        fi
+      elif [ "$value" = "$IR_RIGHT" ]; then
+        if [ "$mode" -eq "$MODE_POINTER" ] ; then
+          mouse_move $REL_X $px
+        else
+          swipe $LEFT
+        fi
+      elif [ "$value" = "$IR_OK" ]; then
+        mouse_click
+      else
+        if [ "$mode" -eq "$MODE_POINTER" ] ; then
+          case "$value" in
+            "$IR_1" )  px_factor=1;;
+            "$IR_2" )  px_factor=2;;
+            "$IR_3" )  px_factor=3;;
+            "$IR_4" )  px_factor=4;;
+            "$IR_5" )  px_factor=5;;
+            "$IR_6" )  px_factor=6;;
+            "$IR_7" )  px_factor=7;;
+            "$IR_8" )  px_factor=8;;
+            "$IR_9" )  px_factor=9;;
+            "$IR_0" )  px_factor=10;;
+            "$IR_MODE" ) toggle_mode;;
+          esac
+        else
+          case "$value" in
+            "$IR_1" )  swipe_factor=18;;
+            "$IR_2" )  swipe_factor=19;;
+            "$IR_3" )  swipe_factor=20;;
+            "$IR_4" )  swipe_factor=22;;
+            "$IR_5" )  swipe_factor=24;;
+            "$IR_6" )  swipe_factor=28;;
+            "$IR_7" )  swipe_factor=36;;
+            "$IR_8" )  swipe_factor=48;;
+            "$IR_9" )  swipe_factor=64;;
+            "$IR_0" )  swipe_factor=96;;
+            "$IR_MODE" ) toggle_mode;;
+          esac
+        fi           
+      fi
+      ignore_next=1
+    else
+      ignore_next=0
+    fi
+  fi
+done
