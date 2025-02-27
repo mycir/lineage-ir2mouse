@@ -1,158 +1,247 @@
 #!/bin/sh
 
-# ir2mouse - Converts IR remote button presses to mouse movements or swipes
+# ir2mouse - Converts IR remote button presses to mouse movements. swipes or key presses.
 
-# For example, on a Rpi/PINN/Lineage setup used as a media centre
+# For example, on an RPi/PINN/Lineage setup used as a media centre.
 
-# As of Magisk 25.2, install ir2mouse and ir2mouse.conf
-# as a boot script/config to /system/adb/post-fs-data.d
-# (Remember to set root X permissions after copying)
+# As of Magisk 28.0, install ir2mouse and ir2mouse.conf as a boot script/config
+# to /data/adb/service.d (Remember to set root X permissions after copying).
 
 # Usage:
 
-# Compass buttons move mouse or swipe, OK to click.
-# User assigned 'IR_MODE' button toggles mouse/swipe
-# 1-9 and 0 buttons change pointer movement/swipe factor       
+# Edit ir2mouse.conf to assign your IR remote's scancodes to various functions that include:
+
+# Compass buttons to move mouse, swipe or simulate key navigation - OK to click.
+# 'IR_MODE' to cycle mouse, swipe or key navigation.
+# 'IR_0..9' to change pointer movement/swipe factor.
+# 'IR_FULLSCREEN' to activate an app's fullscreen mode.
+# 'IR_ENABLE' to suspend ir2mouse when using lirc aware apps, e.g. Kodi.
+# 'IR_ROTATE' to toggle portrait/landscape, which may force an app to the correct aspect ratio.
+# 'IR_PLAY_PAUSE' to activate and tap an app's play/pause button.
 
 # Event types
 EV_SYN=0
 EV_KEY=1
 EV_REL=2
 EV_MSC=4
-# Relative axes
-REL_X=0
-REL_Y=1
-# Synchronization events
-SYN_REPORT=0
+
 # Misc events
-MSC_SCAN=0004
+MSC_SCAN=4
+# Synchronisation report
+SYN_REPORT=0
 # Buttons
-BTN_MOUSE=272
-# Codes
-CLICK_CODE=589825
+MOUSE_BTN_LEFT=272  #0x110
+# Event values
+CLICK_VALUE=589825 #0x90001
+
 # Directions
-UP=0
-DOWN=1
-LEFT=2
-RIGHT=3
+LEFT=0
+RIGHT=1
+UP=2
+DOWN=3
+
 # Modes
 MODE_POINTER=0
 MODE_SWIPE=1
+MODE_NAVIGATE=2
+
+# rotations
+DEGREES_0=0
+DEGREES_90=1
+
 px=4
 px_factor=5
 swipe_factor=24
-ignore_next=0
-last_button=0
+enabled=1
 mode=0
+last_button=0
+rotation=0
 
 source "${0%/*}/ir2mouse.conf"
 
 mouse_move () {
-  sendevent "/dev/input/event$MOUSE" $EV_REL "$1" $(($2*px_factor))
-  sendevent "/dev/input/event$MOUSE" $EV_SYN $SYN_REPORT 0
+  sendevent /dev/input/event$MOUSE ${EV_REL} $1 $(($2*px_factor))
+  sendevent /dev/input/event$MOUSE ${EV_SYN} ${SYN_REPORT} 0
 }
 
-mouse_click () {
-  sendevent "/dev/input/event$MOUSE" $EV_MSC $MSC_SCAN $CLICK_CODE
-  sendevent "/dev/input/event$MOUSE" $EV_KEY $BTN_MOUSE $DOWN
-  sendevent "/dev/input/event$MOUSE" $EV_SYN $SYN_REPORT 0
-  sendevent "/dev/input/event$MOUSE" $EV_MSC $MSC_SCAN $CLICK_CODE
-  sendevent "/dev/input/event$MOUSE" $EV_KEY $BTN_MOUSE $UP
-  sendevent "/dev/input/event$MOUSE" $EV_SYN $SYN_REPORT 0
+mouse_click ()  {
+  sendevent /dev/input/event$MOUSE ${EV_MSC} ${MSC_SCAN} ${CLICK_VALUE}
+  sendevent /dev/input/event$MOUSE ${EV_KEY} ${MOUSE_BTN_LEFT} 1
+  sendevent /dev/input/event$MOUSE ${EV_SYN} ${SYN_REPORT} 0
+  sendevent /dev/input/event$MOUSE ${EV_MSC} ${MSC_SCAN} ${CLICK_VALUE}
+  sendevent /dev/input/event$MOUSE ${EV_KEY} ${MOUSE_BTN_LEFT} 0
+  sendevent /dev/input/event$MOUSE ${EV_SYN} ${SYN_REPORT} 0
 }
 
 swipe () {
-  if [ "$1" -eq "$UP" ] || [ "$1" -eq "$DOWN" ]; then
+  if [ $1 -eq $UP ] || [ $1 -eq $DOWN ]; then
     offset=$((SCREEN_HEIGHT*8/swipe_factor))
     centre=$((SCREEN_WIDTH/2))
   else
     offset=$((SCREEN_WIDTH*8/swipe_factor))
     centre=$((SCREEN_HEIGHT/2))
   fi
-  case "$1" in
-    "$UP" ) input swipe $centre $((SCREEN_HEIGHT-offset)) $centre $offset;;
-    "$DOWN" ) input swipe $centre $offset $centre $((SCREEN_HEIGHT-offset));;
-    "$LEFT" ) input swipe $((SCREEN_WIDTH-offset)) $centre $offset $centre;;
-    "$RIGHT" ) input swipe $offset $centre $((SCREEN_WIDTH-offset)) $centre;;
+  case $1 in
+    $UP ) input swipe $centre $offset $centre $((SCREEN_HEIGHT-offset));;
+    $DOWN ) input swipe $centre $((SCREEN_HEIGHT-offset)) $centre $offset;;
+    $LEFT ) input swipe $offset $centre $((SCREEN_WIDTH-offset)) $centre;;
+    $RIGHT ) input swipe $((SCREEN_WIDTH-offset)) $centre $offset $centre;;
   esac
 }
 
-toggle_mode () {
-  if [ "$mode" -eq "$MODE_POINTER" ] ; then
+cycle_mode () {
+  if [ $mode -eq $MODE_POINTER ] ; then
     mode=$MODE_SWIPE
+    show_toast "Swipe mode set"
+  elif [ $mode -eq $MODE_SWIPE ] ; then
+    mode=$MODE_NAVIGATE
+    show_toast "Key mode set"
   else
     mode=$MODE_POINTER
+    show_toast "Pointer mode set"
   fi
 }
 
-getevent -q -d "/dev/input/event$IR_REMOTE" | \
-    while IFS=" " read -r event code value; do
-  if [ "$code" -eq "$MSC_SCAN" ] ; then
-    if [ "$value" != "$last_button" ] ; then
-      ignore_next=0
-      last_button=$value
+send_key () {
+  sendevent /dev/input/event$KEYBOARD 1 $1 1
+  sendevent /dev/input/event$KEYBOARD 0 0 0
+  sleep $2
+  sendevent /dev/input/event$KEYBOARD 1 $1 0
+  sendevent /dev/input/event$KEYBOARD 0 0 0
+}
+
+match_activity () {
+  i=1
+  for a in $ACTIVITIES ; do
+    active=$(dumpsys activity $a 2>/dev/null | head -n 10 | grep -c -E 'mStopped=false')
+    if [ $active -gt 0 ] ; then
+      echo $i
+      return
     fi
-    if [ "$ignore_next" -eq 0 ] ; then
-      if [ "$value" = "$IR_UP" ] ; then
-        if [ "$mode" -eq "$MODE_POINTER" ] ; then
-          mouse_move $REL_Y -$px
-        else
-          swipe $DOWN
-        fi
-      elif [ "$value" = "$IR_DOWN" ] ; then
-        if [ "$mode" -eq "$MODE_POINTER" ] ; then
-          mouse_move $REL_Y $px
-        else
-          swipe $UP
-        fi
-      elif [ "$value" = "$IR_LEFT" ] ; then
-        if [ "$mode" -eq "$MODE_POINTER" ] ; then
-          mouse_move $REL_X -$px
-        else
-          swipe $RIGHT
-        fi
-      elif [ "$value" = "$IR_RIGHT" ]; then
-        if [ "$mode" -eq "$MODE_POINTER" ] ; then
-          mouse_move $REL_X $px
-        else
-          swipe $LEFT
-        fi
-      elif [ "$value" = "$IR_OK" ]; then
-        mouse_click
+    i=$((( i + 1 )))
+  done
+  echo 0
+}
+
+go_fullscreen () {
+  i=$(match_activity)
+  if [ $i -gt 0 ] ; then
+    eval "set -- ${FS_TAP_COORDS}"
+    eval "btn_coords=\$$i"
+    input tap ${btn_coords%%,*} ${btn_coords#*,}
+    sleep 1
+    input tap ${btn_coords%%,*} ${btn_coords#*,}
+  fi
+}
+
+play_pause () {
+  i=$(match_activity)
+  if [ $i -gt 0 ] ; then
+    # Activate play/pause control by tapping player.
+    input tap $((SCREEN_WIDTH / 2)) $((SCREEN_HEIGHT / 3))
+    sleep $PLAY_PAUSE_DELAY
+    # tap the control
+    input tap $((SCREEN_WIDTH / 2)) $((SCREEN_HEIGHT / 2))
+  else
+    send_key $1 $2
+  fi
+}
+
+toggle_rotation () {
+  if [ $rotation -eq $DEGREES_0 ] ; then
+    settings put system user_rotation 1
+    rotation=$DEGREES_90
+  else
+    settings put system user_rotation 0
+    rotation=$DEGREES_0
+  fi
+}
+
+show_toast () {
+  if [ $TERMUX_TOASTS -ne 0 ] ; then
+    am startservice --user 0 -n com.termux/com.termux.app.RunCommandService \
+    -a com.termux.RUN_COMMAND \
+    --es com.termux.RUN_COMMAND_PATH "/data/data/com.termux/files/usr/bin/termux-toast" \
+    --esa com.termux.RUN_COMMAND_ARGUMENTS "$1" \
+    --es com.termux.RUN_COMMAND_WORKDIR '/data/data/com.termux/files/home' \
+    --ez com.termux.RUN_COMMAND_BACKGROUND 'true' \
+    --es com.termux.RUN_COMMAND_SESSION_ACTION '0'
+  fi
+}
+
+
+if [ $TERMUX_TOASTS -ne 0 ] ; then
+  sleep $TERMUX_WAIT
+  am start --user 0 -n com.termux/com.termux.app.TermuxActivity
+  sleep 5
+  input keyevent $HOME
+fi
+
+ir-keytable -p all
+
+getevent -q -t -d "/dev/input/event$IR_REMOTE" | while IFS="]" read part1 part2; do
+  eval $(printf "ts=%.3f event=%u code=%u value=%s" ${part1#[} $part2)
+  timestamp=${ts%.*}${ts#*.} # convert to ms
+  var_name="x$value"
+  if [ -n "$(eval "echo \${$var_name+set}")" ]; then
+    if [ $code -eq $MSC_SCAN ] ; then
+      eval "set -- \$${var_name}"
+      key_type="$1"
+      param1="$2"
+      param2="$3"
+      t_repeat="$4"
+      if [ "$value" != "$last_button" ] ; then
+          t_elapsed=$t_repeat
+          last_button=$value
       else
-        if [ "$mode" -eq "$MODE_POINTER" ] ; then
-          case "$value" in
-            "$IR_1" )  px_factor=1;;
-            "$IR_2" )  px_factor=2;;
-            "$IR_3" )  px_factor=3;;
-            "$IR_4" )  px_factor=4;;
-            "$IR_5" )  px_factor=5;;
-            "$IR_6" )  px_factor=6;;
-            "$IR_7" )  px_factor=7;;
-            "$IR_8" )  px_factor=8;;
-            "$IR_9" )  px_factor=9;;
-            "$IR_0" )  px_factor=10;;
-            "$IR_MODE" ) toggle_mode;;
-          esac
-        else
-          case "$value" in
-            "$IR_1" )  swipe_factor=18;;
-            "$IR_2" )  swipe_factor=19;;
-            "$IR_3" )  swipe_factor=20;;
-            "$IR_4" )  swipe_factor=22;;
-            "$IR_5" )  swipe_factor=24;;
-            "$IR_6" )  swipe_factor=28;;
-            "$IR_7" )  swipe_factor=36;;
-            "$IR_8" )  swipe_factor=48;;
-            "$IR_9" )  swipe_factor=64;;
-            "$IR_0" )  swipe_factor=96;;
-            "$IR_MODE" ) toggle_mode;;
-          esac
-        fi           
+          t_elapsed=$(( timestamp - ${var_name}_ts ))
       fi
-      ignore_next=1
-    else
-      ignore_next=0
+      if [ $t_elapsed -ge $t_repeat ] ; then
+        if [ $key_type -eq $ENABLE ] ; then
+          if [ $enabled -eq 1 ] ; then
+            enabled=0
+            show_toast "ir2mouse disabled"
+          else
+            enabled=1
+            show_toast "ir2mouse enabled"
+          fi
+        elif [ $enabled -eq 1 ] ; then
+          if [ $key_type -eq $MOVE ] ; then
+            if [ $mode -eq $MODE_POINTER ] ; then
+              mouse_move $((param1 / 2)) $((param1 % 2 ? px : -px))
+            elif [ $mode -eq $MODE_SWIPE ] ; then
+              swipe $param1
+            else
+              input keyevent $param2
+            fi
+          elif [ $key_type -eq $CLICK ] ; then
+            if [ $mode -eq $MODE_POINTER ] ; then
+              mouse_click
+            else
+              send_key $param1 $param2
+            fi
+          elif [ $key_type -eq $FACTOR ] ; then
+            if [ $mode -eq $MODE_POINTER ] ; then
+              px_factor=$param1
+            else
+              swipe_factor=$param2
+            fi
+          elif [ $key_type -eq $MODE ] ; then
+            cycle_mode
+          elif [ $key_type -eq $KEY ]; then
+            input keyevent $param1
+          elif [ $key_type -eq $SEND_KEY ]; then
+            send_key $param1 $param2
+          elif [ $key_type -eq $PLAY_PAUSE ]; then
+            play_pause $param1 $param2
+          elif [ $key_type -eq $FULLSCREEN ]; then
+            go_fullscreen
+          elif [ $key_type -eq $ROTATE ]; then
+            toggle_rotation
+          fi
+        fi
+        eval $(printf "${var_name}_ts=%u" $timestamp)
+      fi
     fi
   fi
 done
