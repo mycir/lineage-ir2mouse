@@ -56,7 +56,13 @@ To obtain its fullscreen control coordinates:
 
 Settings > System > Developer Options > Pointer location.
 
-Note the coordinates when clicking the control's centre.  
+Note the coordinates when clicking the control's centre.
+
+## Limitations
+
+If buttons that trigger a toast are pressed in quick succession, the toast may not show. stop-service before start-service, and disabling Battery Manager have been tried but to no avail. 'Your app can start an activity from the background, except for the case where the app has an activity in the back stack of an existing task.' - _developer.android.com_. This is proven to be the case as the issue does not occur when RUN_COMMAND_BACKGROUND is 'false'.</br>
+```-f $FLAG_ACTIVITY_CLEAR_TOP -f $FLAG_ACTIVITY_CLEAR_TASK -f $FLAG_ACTIVITY_NEW_TASK```</br>
+has been tried but without success.
 
 
 

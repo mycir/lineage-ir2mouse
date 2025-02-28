@@ -19,6 +19,7 @@
 # 'IR_ROTATE' to toggle portrait/landscape, which may force an app to the correct aspect ratio.
 # 'IR_PLAY_PAUSE' to activate and tap an app's play/pause button.
 
+
 # Event types
 EV_SYN=0
 EV_KEY=1
@@ -92,13 +93,13 @@ swipe () {
 cycle_mode () {
   if [ $mode -eq $MODE_POINTER ] ; then
     mode=$MODE_SWIPE
-    show_toast "Swipe mode set"
+    show_toast "Swipe mode set" $BG_SWIPE
   elif [ $mode -eq $MODE_SWIPE ] ; then
     mode=$MODE_NAVIGATE
-    show_toast "Key mode set"
+    show_toast "Key mode set" $BG_KEYS
   else
     mode=$MODE_POINTER
-    show_toast "Pointer mode set"
+    show_toast "Pointer mode set" $BG_PTR
   fi
 }
 
@@ -162,13 +163,12 @@ show_toast () {
     am startservice --user 0 -n com.termux/com.termux.app.RunCommandService \
     -a com.termux.RUN_COMMAND \
     --es com.termux.RUN_COMMAND_PATH "/data/data/com.termux/files/usr/bin/termux-toast" \
-    --esa com.termux.RUN_COMMAND_ARGUMENTS "$1" \
+    --esa com.termux.RUN_COMMAND_ARGUMENTS "-s,-b,$2,$1" \
     --es com.termux.RUN_COMMAND_WORKDIR '/data/data/com.termux/files/home' \
     --ez com.termux.RUN_COMMAND_BACKGROUND 'true' \
     --es com.termux.RUN_COMMAND_SESSION_ACTION '0'
   fi
 }
-
 
 if [ $TERMUX_TOASTS -ne 0 ] ; then
   sleep $TERMUX_WAIT
@@ -200,10 +200,10 @@ getevent -q -t -d "/dev/input/event$IR_REMOTE" | while IFS="]" read part1 part2;
         if [ $key_type -eq $ENABLE ] ; then
           if [ $enabled -eq 1 ] ; then
             enabled=0
-            show_toast "ir2mouse disabled"
+            show_toast "ir2mouse disabled" $BG_DISABLED
           else
             enabled=1
-            show_toast "ir2mouse enabled"
+            show_toast "ir2mouse enabled" $BG_ENABLED
           fi
         elif [ $enabled -eq 1 ] ; then
           if [ $key_type -eq $MOVE ] ; then
@@ -228,7 +228,7 @@ getevent -q -t -d "/dev/input/event$IR_REMOTE" | while IFS="]" read part1 part2;
             fi
           elif [ $key_type -eq $MODE ] ; then
             cycle_mode
-          elif [ $key_type -eq $KEY ]; then
+          elif [ $key_type -eq $INPUT_KEY ]; then
             input keyevent $param1
           elif [ $key_type -eq $SEND_KEY ]; then
             send_key $param1 $param2
